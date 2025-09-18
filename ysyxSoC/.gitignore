@@ -1,0 +1,5 @@
+*
+!perip/
+!perip/**
+!*.v
+!.gitignore
