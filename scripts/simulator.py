@@ -13,8 +13,7 @@ try:
     NPC_HOME = Path(os.environ["NPC_HOME"])
     TOP_NAME = os.environ.get("TOP_NAME", "ysyxSoCFull")
     CROSS_COMPILE = os.environ.get("CROSS_COMPILE", "riscv64-linux-gnu-")
-    CPU_COUNT = os.cpu_count() or 1
-    # CPU_COUNT = 1
+    CPU_COUNT = 8
 except KeyError as e:
     print(f"Error: Environment variable {e} is not set. Please source your environment setup script.", file=sys.stderr)
     sys.exit(1)
