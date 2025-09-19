@@ -38,11 +38,7 @@ CXXSRC = $(wildcard $(shell find ./csrc -name  *.cpp))
 VSRC += $(wildcard $(shell find $(ysyxSOC_DIR)/perip -name *.v -or -name *.vh -or -name *.sv -or -name *.svh))
 VSRC += $()
 
-ifneq ($(RTL_FILE),)
-    VSRC += $(RTL_FILE)
-endif
-
-VSRC += $(ysyxSOC_DIR)/ysyxSoCFull.v
+VSRC += $(wildcard $(RESULT_DIR)/vsrc/*.v) $(wildcard $(RESULT_DIR)/vsrc/*.sv)
 
 ## 2. 添加头文件路径
 C_INCPATH += $(NPC_HOME)/include $(INC_PATH) \

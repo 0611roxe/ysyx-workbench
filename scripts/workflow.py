@@ -4,9 +4,9 @@ import os
 from pathlib import Path
 from typing import Optional
 import json
-import re
 
 try:
+    from file_manager import FileBackupManager
     from simulator import Simulator
     from cpu_test import CpuTestLogParser
     from benchmark import BenchmarkLogParser
@@ -14,7 +14,6 @@ except ImportError as e:
     print(f"Error: Could not import a required class. Is the script path configured correctly?", file=sys.stderr)
     print(f"Details: {e}", file=sys.stderr)
     sys.exit(1)
-
 
 class MainWorkflow:
     def __init__(self, rtl_file: Path, stage: str, mainargs: str, tests: list[str], stage_template_file: Optional[Path] = None):
@@ -30,68 +29,41 @@ class MainWorkflow:
             print(f"Error: Required environment variable {e} is not set.", file=sys.stderr)
             print("The 'step_processor' should have injected this variable. Check your step.yaml.", file=sys.stderr)
             sys.exit(1)
-        
-        self.simulator: Optional[Simulator] = None
+
+        self.file_mgr = FileBackupManager(self.result_dir)
 
         soc_home = os.environ.get("SOC_HOME")
         if soc_home is None:
             raise RuntimeError("Environment variable SOC_HOME is not set")
         self.soc_v_path = Path(soc_home) / "ysyxSoCFull.v"
-        self._soc_v_backup = None
-
         self.dstagecpu_sv_path = Path(soc_home) / "DSTAGECPU.sv"
-        self._dstagecpu_sv_backup = None
+
+        self.soc_v_result_path = self.file_mgr.backup(self.soc_v_path)
+        self.dstagecpu_sv_result_path = self.file_mgr.backup(self.dstagecpu_sv_path)
+        self.rtl_file_result_path = self.file_mgr.backup(self.rtl_file)
 
         self.soc_test_json = f"{os.environ.get('TOP_NAME', 'top')}_soc_test.json"
+        self.simulator: Optional[Simulator] = None
 
-    def _replace_top_name_in_soc_v(self):
-        if not self.soc_v_path.exists():
-            print(f"Warning: {self.soc_v_path} not found, skip replacement.", file=sys.stderr)
-            return
-        text = self.soc_v_path.read_text()
-        self._soc_v_backup = text
+    def _replace_files(self):
+        top_name = os.environ.get("TOP_NAME", "ysyx_00000000")
         if self.stage.upper() == "D":
-            new_top = "DSTAGECPU"
+            self.file_mgr.replace("DSTAGECPU.sv", r'ysyx_00000000', top_name)
+            self.file_mgr.replace("ysyxSoCFull.v", r'ysyx_00000000', "DSTAGECPU")
         else:
-            new_top = os.environ.get("TOP_NAME", "ysyx_00000000")
-        new_text, count = re.subn(r'ysyx_00000000', new_top, text)
-        if count > 0:
-            self.soc_v_path.write_text(new_text)
-            print(f"Replaced ysyx_00000000 with {new_top} in {self.soc_v_path}")
-        else:
-            print(f"ysyx_00000000 not found in {self.soc_v_path}, no replacement made.", file=sys.stderr)
+            self.file_mgr.replace("ysyxSoCFull.v", r'ysyx_00000000', top_name)
 
-    def _restore_soc_v_file(self):
-        if self._soc_v_backup is not None:
-            self.soc_v_path.write_text(self._soc_v_backup)
-            print(f"Restored {self.soc_v_path} to original ysyx_00000000.")
-
-    def _replace_top_name_in_dstagecpu(self):
-        if not self.dstagecpu_sv_path.exists():
-            print(f"Warning: {self.dstagecpu_sv_path} not found, skip replacement.", file=sys.stderr)
-            return
-        text = self.dstagecpu_sv_path.read_text()
-        self._dstagecpu_sv_backup = text
-        new_top = os.environ.get("TOP_NAME", "ysyx_00000000")
-        new_text, count = re.subn(r'ysyx_00000000', new_top, text)
-        if count > 0:
-            self.dstagecpu_sv_path.write_text(new_text)
-            print(f"Replaced ysyx_00000000 with {new_top} in {self.dstagecpu_sv_path}")
-        else:
-            print(f"ysyx_00000000 not found in {self.dstagecpu_sv_path}, no replacement made.", file=sys.stderr)
-
-    def _restore_dstagecpu_file(self):
-        if self._dstagecpu_sv_backup is not None:
-            self.dstagecpu_sv_path.write_text(self._dstagecpu_sv_backup)
-            print(f"Restored {self.dstagecpu_sv_path} to original ysyx_00000000.")
+    def _restore_files(self):
+        if self.stage.upper() == "D":
+            self.file_mgr.restore("DSTAGECPU.sv")
+        self.file_mgr.restore("ysyxSoCFull.v")
 
     def execute(self) -> bool:
-        if self.stage.upper() == 'D':
-            self._replace_top_name_in_dstagecpu()
-        self._replace_top_name_in_soc_v()
+        self._replace_files()
         try:
+            sim_rtl_file = self.rtl_file_result_path if self.rtl_file_result_path.exists() else self.rtl_file
             self.simulator = Simulator(
-                rtl_file=self.rtl_file, 
+                rtl_file=sim_rtl_file,
                 top_name=os.environ.get("TOP_NAME", "ysyx_00000000")
             )
             if not self.simulator._build_simulator():
@@ -106,20 +78,18 @@ class MainWorkflow:
             if not selected_tests:
                 print("\nNo tests were selected or discovered. Workflow finished.")
                 self.write_soc_test_json({})
-                return True 
+                return True
 
             print(f"\nWorkflow will execute the following tests: {', '.join(selected_tests)}")
             tests_passed = self.simulator.run_tests(tests_to_run=selected_tests, mainargs=self.mainargs)
 
             if not tests_passed:
                 print("\nWarning: Some tests failed. Proceeding with log parsing anyway.", file=sys.stderr)
-            
+
             self.run_parsers_and_generate_soc_json(selected_tests)
             return tests_passed
         finally:
-            if self.stage.upper() == 'D':
-                self._restore_dstagecpu_file()
-            self._restore_soc_v_file()
+            self._restore_files()
 
     def run_parsers_and_generate_soc_json(self, executed_tests: list[str]):
         soc_json_path = self.result_dir / self.soc_test_json
@@ -173,7 +143,7 @@ def main():
         tests=args.tests,
         stage_template_file=args.Dstage_template
     )
-    
+
     all_tests_succeeded = workflow.execute()
 
     if all_tests_succeeded:

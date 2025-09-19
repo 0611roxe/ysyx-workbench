@@ -12,7 +12,6 @@ try:
     AM_KERNELS_HOME = Path(os.environ["AM_KERNELS_HOME"])
     NPC_HOME = Path(os.environ["NPC_HOME"])
     TOP_NAME = os.environ.get("TOP_NAME", "ysyxSoCFull")
-    ARCH = os.environ.get("ARCH", "riscv32e-ysyxsoc")
     CROSS_COMPILE = os.environ.get("CROSS_COMPILE", "riscv64-linux-gnu-")
     CPU_COUNT = os.cpu_count() or 1
     # CPU_COUNT = 1
@@ -45,10 +44,15 @@ class Simulator:
         },
     }
 
-    def __init__(self, rtl_file: Optional[Path] = None, top_name: str = None, max_parallel_jobs: int = 4):
+    def __init__(self, rtl_file: Optional[Path] = None, top_name: str = None, max_parallel_jobs: int = 4, stage: str = "D"):
         self.rtl_file = rtl_file
         self.top_name = top_name 
         self.max_parallel_jobs = min(max_parallel_jobs, CPU_COUNT)
+        self.stage = stage.upper()
+        if self.stage == "D":
+            self.ARCH = "minirv-minirv"
+        else:
+            self.ARCH = "riscv32e-ysyxsoc"
         self._validate_paths()
 
     def _validate_paths(self):
@@ -126,7 +130,7 @@ class Simulator:
                 if test_name == "microbench":
                     specific_args.append(f"mainargs={mainargs}")
                 
-                common_args = [f"-j{cores_per_job}", f"ARCH={ARCH}", f"CROSS_COMPILE={CROSS_COMPILE}", "run"]
+                common_args = [f"-j{cores_per_job}", f"ARCH={self.ARCH}", f"CROSS_COMPILE={CROSS_COMPILE}", "run"]
                 if self.rtl_file:
                     common_args.append(f"RTL_FILE={self.rtl_file}")
                 
@@ -146,12 +150,6 @@ class Simulator:
                     sys.stderr.write(f"--- END OF ERROR OUTPUT FOR [{title}] ---\n\n")
                     test_results[title] = False
                     all_passed = False
-
-        # print("\nFinal Test Summary:")
-        # sorted_results = {name: test_results.get(name, False) for name in tests_to_run}
-        # for name, passed in sorted_results.items():
-        #     status = "PASSED" if passed else "FAILED"
-        #     print(f"- {name:<12}: {status}")
         
         return all_passed
 
