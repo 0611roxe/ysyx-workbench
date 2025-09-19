@@ -66,7 +66,9 @@ class MainWorkflow:
             sim_rtl_file = self.rtl_file_result_path if self.rtl_file_result_path.exists() else self.rtl_file
             self.simulator = Simulator(
                 rtl_file=sim_rtl_file,
-                top_name=os.environ.get("TOP_NAME", "ysyx_00000000")
+                top_name=os.environ.get("TOP_NAME", "ysyx_00000000"),
+                stage=self.stage,
+                max_parallel_jobs=8
             )
             if not self.simulator._build_simulator():
                 print("\nAborting workflow due to simulator build failure.", file=sys.stderr)
