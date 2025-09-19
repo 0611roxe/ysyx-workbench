@@ -115,10 +115,29 @@ class MainWorkflow:
             if bench_result:
                 soc_json_data.update(bench_result)
 
-        if not soc_json_data:
-            soc_json_data = {}
+        def check_all_pass(data: dict) -> bool:
+            if "cpu_test" in data:
+                cpu = data["cpu_test"]
+                if isinstance(cpu, dict):
+                    summary = cpu.get("summary", {})
+                    if summary.get("overall_status", "FAIL") != "PASS":
+                        return False
 
-        self.write_soc_test_json(soc_json_data)
+            for k in ["coremark", "dhrystone", "microbench"]:
+                v = data.get(k)
+                if v is not None and isinstance(v, dict):
+                    if v.get("status", "FAIL") != "PASS":
+                        return False
+            return True
+
+        all_pass = check_all_pass(soc_json_data) and bool(soc_json_data)
+
+        final_data = {}
+        if all_pass:
+            final_data["result"] = "All Pass"
+        final_data.update(soc_json_data)
+
+        self.write_soc_test_json(final_data)
 
     def write_soc_test_json(self, data):
         soc_json_path = self.result_dir / self.soc_test_json
