@@ -129,26 +129,28 @@ class BenchmarkLogParser:
             return {"status": "FAIL", "error": f"Error parsing {log_file}: {e}"}
 
     def parse(self, return_data=False):
-        benchmark_results = {
-            "coremark": self._parse_single_log("coremark", self._parse_coremark),
-            "dhrystone": self._parse_single_log("dhrystone", self._parse_dhrystone),
-            "microbench": self._parse_single_log("microbench", self._parse_microbench),
+        metadata = {
+            "source_logs": {k: str(v) for k, v in self.log_files.items()},
+            "parser": self.__class__.__name__,
+            "parsed_at_utc": datetime.now(timezone.utc).isoformat()
         }
 
-        final_report = {
-            "metadata": {
-                "source_logs": {k: str(v) for k, v in self.log_files.items()},
-                "parser": self.__class__.__name__,
-                "parsed_at_utc": datetime.now(timezone.utc).isoformat(),
-                "parsed_by":  os.environ.get("USER", "unknown_user"),
-            },
-            "benchmarks": benchmark_results
-        }
-        
+        results = {}
+
+        for name, parser_func in [
+            ("coremark", self._parse_coremark),
+            ("dhrystone", self._parse_dhrystone),
+            ("microbench", self._parse_microbench)
+        ]:
+            res = self._parse_single_log(name, parser_func)
+            res["metadata"] = metadata
+            results[name] = res
+
         if not return_data:
-            self._write_json(final_report)
-            self._print_summary(final_report)
-        return final_report if return_data else None
+            self._write_json(results)
+            self._print_summary(results)
+            
+        return results if return_data else None
 
     def _write_json(self, data: Dict[str, Any]):
         try:
@@ -159,7 +161,7 @@ class BenchmarkLogParser:
 
     def _print_summary(self, report: Dict[str, Any]):
         print("Benchmark Summary:")
-        for name, result in report.get("benchmarks", {}).items():
+        for name, result in report.items():
             status = result.get('status', 'FAIL')
             summary_str = ""
             if name == "microbench" and "summary" in result:

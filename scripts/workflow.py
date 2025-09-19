@@ -39,7 +39,9 @@ class MainWorkflow:
         self.dstagecpu_sv_path = Path(soc_home) / "DSTAGECPU.sv"
 
         self.soc_v_result_path = self.file_mgr.backup(self.soc_v_path)
-        self.dstagecpu_sv_result_path = self.file_mgr.backup(self.dstagecpu_sv_path)
+        self.dstagecpu_sv_result_path = None
+        if self.stage.upper() == "D":
+            self.dstagecpu_sv_result_path = self.file_mgr.backup(self.dstagecpu_sv_path)
         self.rtl_file_result_path = self.file_mgr.backup(self.rtl_file)
 
         self.soc_test_json = f"{os.environ.get('TOP_NAME', 'top')}_soc_test.json"
@@ -110,7 +112,8 @@ class MainWorkflow:
             print("\nRunning parser for: benchmark")
             bench_parser = BenchmarkLogParser(log_dir=str(self.result_dir))
             bench_result = bench_parser.parse(return_data=True)
-            soc_json_data["benchmark"] = bench_result if bench_result is not None else {}
+            if bench_result:
+                soc_json_data.update(bench_result)
 
         if not soc_json_data:
             soc_json_data = {}
@@ -129,7 +132,7 @@ class MainWorkflow:
 def main():
     parser = argparse.ArgumentParser(description="A unified workflow to run tests and then parse their logs.")
     parser.add_argument('--rtl_file', type=Path, required=True)
-    parser.add_argument('--stage', type=str, required=True, choices=['B', 'D'])
+    parser.add_argument('--stage', type=str, required=True, choices=['B', 'D', 'C'])
     parser.add_argument('--tests', nargs='*', default=['all'])
     parser.add_argument('--mainargs', type=str, default='train')
     parser.add_argument('--Dstage_template', type=Path, default=None, help='Template file for D stage')
