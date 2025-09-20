@@ -109,7 +109,6 @@ run: $(BUILD_DIR)/V$(TOP_NAME)
 ## 4. 通过gdb调试NPC
 gdb:
 	gdb --args $(BUILD_DIR)/V$(TOP_NAME)  $(ARGS) $(ELF) $(PORT) $(DIFF_FILE) $(IMG)
-$(BUILD_DIR)/V$(TOP_NAME)  $(BATCH_MODE) $(ELF) $(PORT) $(DIFF_FILE) $(IMG)
 
 ## 5. clean
 .PHONY: clean  count_v
