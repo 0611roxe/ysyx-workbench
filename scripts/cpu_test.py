@@ -4,14 +4,10 @@ import re
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Iterable, Tuple
 import argparse
-import sys
 from pathlib import Path
+from workflow_exceptions import WorkflowLogParseError, workflow_exception_handler
 
 class CpuTestLogParser:
-    """
-    Parses a CPU test log file to generate a structured JSON summary.
-    """
-
     _TEST_LINE_RE = re.compile(
         r"^\[\s*(?P<name>[^\]]+?)\s*\]\s+(?P<status>PASS|FAIL)\s+(?P<time>[\d.]+)(?P<unit>s|ms|us)",
         re.IGNORECASE
@@ -23,12 +19,10 @@ class CpuTestLogParser:
 
     def __init__(self, log_dir: str):
         if not log_dir:
-            raise ValueError("log_dir cannot be empty.")
-            
+            raise WorkflowLogParseError("log_dir cannot be empty.")
         top_name = os.environ.get("TOP_NAME", "unknown_top")
         self.log_file = Path(log_dir) / f"{top_name}_cpu_test.log"
         self.result_json = Path(log_dir) / f"{top_name}_cpu_test.json"
-        
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
 
     def _convert_to_seconds(self, time_str: str, unit: str) -> float:
@@ -45,7 +39,6 @@ class CpuTestLogParser:
     def _parse_lines(self, lines: Iterable[str]) -> Tuple[Dict[str, Any], Optional[float]]:
         test_details: Dict[str, Any] = {}
         total_exec_time: Optional[float] = None
-
         for line in lines:
             m_test = self._TEST_LINE_RE.match(line)
             if m_test:
@@ -56,38 +49,27 @@ class CpuTestLogParser:
                     "time_s": elapsed_s
                 }
                 continue
-
             m_total = self._TOTAL_TIME_RE.match(line)
             if m_total:
                 data = m_total.groupdict()
                 total_exec_time = self._convert_to_seconds(data['time'], data['unit'])
-        
         return test_details, total_exec_time
 
     def parse(self, return_data=False):
         if not self.log_file.is_file():
             error_msg = f"Log file not found at {self.log_file}"
-            print(f"Error: {error_msg}")
             summary = self._create_error_summary(error_msg)
             if not return_data:
                 self._write_json(summary)
             return summary if return_data else None
-
         try:
             with self.log_file.open("r", encoding="utf-8") as f:
                 test_details, total_exec_time = self._parse_lines(f)
         except Exception as e:
-            error_msg = f"An unexpected error occurred while parsing {self.log_file}: {e}"
-            print(f"Error: {error_msg}")
-            summary = self._create_error_summary(error_msg)
-            if not return_data:
-                self._write_json(summary)
-            return summary if return_data else None
-
+            raise WorkflowLogParseError(f"Unexpected error parsing {self.log_file}: {e}")
         pass_count = sum(1 for detail in test_details.values() if detail["status"] == "PASS")
         total_count = len(test_details)
         all_pass = (pass_count == total_count) and (total_count > 0)
-
         summary_data = {
             "overall_status": "PASS" if all_pass else "FAIL",
             "total_tests": total_count,
@@ -96,7 +78,6 @@ class CpuTestLogParser:
             "pass_rate": f"{pass_count/total_count:.2%}" if total_count > 0 else "N/A",
             "total_execution_time_s": total_exec_time,
         }
-        
         final_report = {
             "metadata": {
                 "source_log_file": str(self.log_file),
@@ -107,15 +88,10 @@ class CpuTestLogParser:
             "summary": summary_data,
             "details": test_details
         }
-
         if not return_data:
             self._write_json(final_report)
-            print(f"CPU Test Summary: {summary_data['overall_status']} ({summary_data['passed']}/{summary_data['total_tests']})")
-            if summary_data['total_execution_time_s'] is not None:
-                print(f"Total Execution Time: {summary_data['total_execution_time_s']:.3f}s")
-            print(f"Result JSON saved to: {self.result_json}")
+            print("[OK]   cpu-test results saved to", self.result_json)
         return final_report if return_data else None
-
 
     def _create_error_summary(self, error_message: str) -> Dict[str, Any]:
         return {
@@ -136,20 +112,17 @@ class CpuTestLogParser:
             with self.result_json.open("w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
         except IOError as e:
-            print(f"Error: Could not write JSON to {self.result_json}. Reason: {e}", file=sys.stderr)
+            raise WorkflowLogParseError(f"Could not write JSON to {self.result_json}. Reason: {e}")
+
+@workflow_exception_handler
+def main():
+    parser = argparse.ArgumentParser(description="Parse CPU test logs into a JSON summary.")
+    parser.add_argument("--log_dir", type=str, default=os.environ.get("RESULT_DIR", "."), help="Directory containing the log file. Defaults to RESULT_DIR env var or current directory.")
+    args = parser.parse_args()
+    print("[INFO] Parsing cpu-test log...")
+    log_parser = CpuTestLogParser(log_dir=args.log_dir)
+    log_parser.parse()
+    print("[OK]   cpu-test results saved.")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Parse CPU test logs into a JSON summary.")
-    parser.add_argument(
-        "--log_dir",
-        type=str,
-        default=os.environ.get("RESULT_DIR", "."),
-        help="Directory containing the log file. Defaults to RESULT_DIR env var or current directory."
-    )
-    args = parser.parse_args()
-    
-    try:
-        log_parser = CpuTestLogParser(log_dir=args.log_dir)
-        log_parser.parse()
-    except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+    main()

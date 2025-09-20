@@ -1,47 +1,58 @@
-import shutil
-import sys
 from pathlib import Path
+import shutil
 import re
+from typing import List, Union
+from workflow_exceptions import WorkflowFileNotFound
 
 class FileBackupManager:
     def __init__(self, result_dir: Path):
         self.vsrc_dir = result_dir / "vsrc"
         self.vsrc_dir.mkdir(parents=True, exist_ok=True)
-        self.backup_map = {} 
-        self._original_content = {} 
+        self.backup_map = {}
+        self._original_content = {}
 
-    def backup(self, src_path: Path):
+    def backup(self, src_path: Union[Path, str, List[Union[Path, str]]]):
+        if isinstance(src_path, (list, tuple)):
+            result = []
+            for p in src_path:
+                result.append(self.backup(Path(p)))
+            return result
+        src_path = Path(src_path)
         dst_path = self.vsrc_dir / src_path.name
         if src_path.exists():
             if src_path.resolve() != dst_path.resolve():
                 shutil.copy(src_path, dst_path)
             self.backup_map[src_path.resolve()] = dst_path
         else:
-            print(f"Warning: {src_path} not found, skip backup.", file=sys.stderr)
+            raise WorkflowFileNotFound(f"{src_path} not found, cannot backup.")
         return dst_path
 
-    def replace(self, filename: str, pattern: str, repl: str):
+    def replace(self, filename: Union[str, List[str]], pattern: str, repl: str):
+        if isinstance(filename, (list, tuple)):
+            for f in filename:
+                self.replace(f, pattern, repl)
+            return
         file_path = self.vsrc_dir / filename
         if not file_path.exists():
-            print(f"Warning: {file_path} not found, skip replacement.", file=sys.stderr)
-            return
+            raise WorkflowFileNotFound(f"{file_path} not found, cannot replace.")
         text = file_path.read_text()
         if file_path not in self._original_content:
-            self._original_content[file_path] = text 
+            self._original_content[file_path] = text
         new_text, count = re.subn(pattern, repl, text)
         if count > 0:
             file_path.write_text(new_text)
-            print(f"Replaced {pattern} with {repl} in {file_path}")
-        else:
-            print(f"{pattern} not found in {file_path}, no replacement made.", file=sys.stderr)
 
-    def restore(self, filename: str):
+    def restore(self, filename: Union[str, List[str]]):
+        if isinstance(filename, (list, tuple)):
+            for f in filename:
+                self.restore(f)
+            return
         file_path = self.vsrc_dir / filename
         if file_path in self._original_content:
             file_path.write_text(self._original_content[file_path])
-            print(f"Restored {file_path} to original content.")
-        else:
-            print(f"No backup found for {file_path}, nothing restored.", file=sys.stderr)
 
-    def get_backup_path(self, src_path: Path):
+    def get_backup_path(self, src_path: Union[Path, str, List[Union[Path, str]]]):
+        if isinstance(src_path, (list, tuple)):
+            return [self.get_backup_path(Path(p)) for p in src_path]
+        src_path = Path(src_path)
         return self.backup_map.get(src_path.resolve(), self.vsrc_dir / src_path.name)

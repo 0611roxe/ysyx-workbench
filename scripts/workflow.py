@@ -2,8 +2,13 @@ import argparse
 import sys
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 import json
+from workflow_exceptions import (
+    WorkflowEnvError, WorkflowFileNotFound, WorkflowSimBuildError,
+    WorkflowTestNotFound, WorkflowLogParseError, WorkflowArgumentError,
+    workflow_exception_handler
+)
 
 try:
     from file_manager import FileBackupManager
@@ -11,38 +16,40 @@ try:
     from cpu_test import CpuTestLogParser
     from benchmark import BenchmarkLogParser
 except ImportError as e:
-    print(f"Error: Could not import a required class. Is the script path configured correctly?", file=sys.stderr)
-    print(f"Details: {e}", file=sys.stderr)
-    sys.exit(1)
+    raise WorkflowEnvError(f"Could not import a required class. Is the script path configured correctly? Details: {e}")
+
+def require_env(var):
+    v = os.environ.get(var)
+    if v is None:
+        raise WorkflowEnvError(f"Required environment variable '{var}' is not set")
+    return v
 
 class MainWorkflow:
-    def __init__(self, rtl_file: Path, stage: str, mainargs: str, tests: list[str], stage_template_file: Optional[Path] = None):
-        self.rtl_file = rtl_file
+    def __init__(self, rtl_file, stage: str, mainargs: str, tests: list[str]):
+        self.rtl_file = rtl_file.split()
         self.stage = stage
         self.mainargs = mainargs
         self.tests_to_run = tests
-        self.stage_template_file = stage_template_file
 
-        try:
-            self.result_dir = Path(os.environ['RESULT_DIR'])
-        except KeyError as e:
-            print(f"Error: Required environment variable {e} is not set.", file=sys.stderr)
-            print("The 'step_processor' should have injected this variable. Check your step.yaml.", file=sys.stderr)
-            sys.exit(1)
-
+        self.result_dir = Path(require_env('RESULT_DIR'))
         self.file_mgr = FileBackupManager(self.result_dir)
 
-        soc_home = os.environ.get("SOC_HOME")
-        if soc_home is None:
-            raise RuntimeError("Environment variable SOC_HOME is not set")
+        soc_home = require_env("SOC_HOME")
         self.soc_v_path = Path(soc_home) / "ysyxSoCFull.v"
         self.dstagecpu_sv_path = Path(soc_home) / "DSTAGECPU.sv"
 
+        if not self.soc_v_path.exists():
+            raise WorkflowFileNotFound(f"{self.soc_v_path} not found")
+        if self.stage.upper() == "D" and not self.dstagecpu_sv_path.exists():
+            raise WorkflowFileNotFound(f"{self.dstagecpu_sv_path} not found")
+
+        print("[INFO] Backing up and preparing files...")
         self.soc_v_result_path = self.file_mgr.backup(self.soc_v_path)
         self.dstagecpu_sv_result_path = None
         if self.stage.upper() == "D":
             self.dstagecpu_sv_result_path = self.file_mgr.backup(self.dstagecpu_sv_path)
         self.rtl_file_result_path = self.file_mgr.backup(self.rtl_file)
+        print("[OK]   Files backup and replacement done.")
 
         self.soc_test_json = f"{os.environ.get('TOP_NAME', 'top')}_soc_test.json"
         self.simulator: Optional[Simulator] = None
@@ -56,14 +63,14 @@ class MainWorkflow:
             self.file_mgr.replace("ysyxSoCFull.v", r'ysyx_00000000', top_name)
 
     def _restore_files(self):
-        if self.stage.upper() == "D":
-            self.file_mgr.restore("DSTAGECPU.sv")
-        self.file_mgr.restore("ysyxSoCFull.v")
+        self.file_mgr.restore(["ysyxSoCFull.v", "DSTAGECPU.sv"] if self.stage.upper() == "D" else ["ysyxSoCFull.v"])
+        print("[INFO] Files restored to original content.")
 
     def execute(self) -> bool:
         self._replace_files()
         try:
-            sim_rtl_file = self.rtl_file_result_path if self.rtl_file_result_path.exists() else self.rtl_file
+            print("[INFO] Building Verilator Simulator...")
+            sim_rtl_file = self.rtl_file_result_path
             self.simulator = Simulator(
                 rtl_file=sim_rtl_file,
                 top_name=os.environ.get("TOP_NAME", "ysyx_00000000"),
@@ -71,8 +78,17 @@ class MainWorkflow:
                 max_parallel_jobs=8
             )
             if not self.simulator._build_simulator():
-                print("\nAborting workflow due to simulator build failure.", file=sys.stderr)
-                sys.exit(1)
+                build_log = Path(os.environ["RESULT_DIR"]) / "build.log"
+                print("[ERROR] Build Verilator Simulator failed. Dumping build.log:", file=sys.stderr)
+                try:
+                    with open(build_log, "r") as f:
+                        tail = f.readlines()[-80:]
+                        print("".join(tail), file=sys.stderr)
+                except Exception as e:
+                    print(f"[ERROR] Could not read build log: {e}", file=sys.stderr)
+                raise WorkflowSimBuildError("Simulator build failure")
+
+            print("[OK]   Build Verilator Simulator finished.")
 
             if 'all' in self.tests_to_run:
                 selected_tests = self.simulator._discover_available_tests()
@@ -80,15 +96,16 @@ class MainWorkflow:
                 selected_tests = self.tests_to_run
 
             if not selected_tests:
-                print("\nNo tests were selected or discovered. Workflow finished.")
+                print("[INFO] No tests were selected or discovered. Workflow finished.")
                 self.write_soc_test_json({})
                 return True
 
-            print(f"\nWorkflow will execute the following tests: {', '.join(selected_tests)}")
+            print(f"[INFO] Running tests: {', '.join(selected_tests)}")
             tests_passed = self.simulator.run_tests(tests_to_run=selected_tests, mainargs=self.mainargs)
-
-            if not tests_passed:
-                print("\nWarning: Some tests failed. Proceeding with log parsing anyway.", file=sys.stderr)
+            if tests_passed:
+                print("[OK]   All tests finished.")
+            else:
+                print("[ERROR] Some tests failed. See logs above.", file=sys.stderr)
 
             self.run_parsers_and_generate_soc_json(selected_tests)
             return tests_passed
@@ -105,17 +122,22 @@ class MainWorkflow:
         soc_json_data = {}
 
         if need_cpu or need_all:
-            print("\nRunning parser for: cpu-test")
+            print("[INFO] Parsing cpu-test log...")
             cpu_parser = CpuTestLogParser(log_dir=str(self.result_dir))
             cpu_result = cpu_parser.parse(return_data=True)
             soc_json_data["cpu_test"] = cpu_result if cpu_result is not None else {}
+            print("[OK]   cpu-test results saved to", soc_json_path)
 
         if need_bench or need_all:
-            print("\nRunning parser for: benchmark")
+            print("[INFO] Parsing benchmark logs...")
             bench_parser = BenchmarkLogParser(log_dir=str(self.result_dir))
             bench_result = bench_parser.parse(return_data=True)
             if bench_result:
-                soc_json_data.update(bench_result)
+                executed = set(t for t in executed_tests if t in ["coremark", "dhrystone", "microbench"])
+                for name in executed:
+                    if name in bench_result:
+                        soc_json_data[name] = bench_result[name]
+            print("[OK]   Benchmark results saved to", soc_json_path)
 
         def check_all_pass(data: dict) -> bool:
             if "cpu_test" in data:
@@ -124,7 +146,6 @@ class MainWorkflow:
                     summary = cpu.get("summary", {})
                     if summary.get("overall_status", "FAIL") != "PASS":
                         return False
-
             for k in ["coremark", "dhrystone", "microbench"]:
                 v = data.get(k)
                 if v is not None and isinstance(v, dict):
@@ -146,17 +167,16 @@ class MainWorkflow:
         try:
             with open(soc_json_path, "w") as f:
                 json.dump(data, f, indent=2)
-            print(f"SOC test results written to {soc_json_path}")
         except Exception as e:
-            print(f"Failed to write SOC test json: {e}", file=sys.stderr)
+            print(f"[ERROR] Failed to write SOC test json: {e}", file=sys.stderr)
 
+@workflow_exception_handler
 def main():
     parser = argparse.ArgumentParser(description="A unified workflow to run tests and then parse their logs.")
-    parser.add_argument('--rtl_file', type=Path, required=True)
+    parser.add_argument('--rtl_file', type=str, required=True, help='RTL files as a single string, e.g. "a.sv b.sv"')
     parser.add_argument('--stage', type=str, required=True, choices=['B', 'D', 'C'])
     parser.add_argument('--tests', nargs='*', default=['all'])
     parser.add_argument('--mainargs', type=str, default='train')
-    parser.add_argument('--Dstage_template', type=Path, default=None, help='Template file for D stage')
 
     args = parser.parse_args()
 
@@ -164,17 +184,16 @@ def main():
         rtl_file=args.rtl_file,
         stage=args.stage,
         mainargs=args.mainargs,
-        tests=args.tests,
-        stage_template_file=args.Dstage_template
+        tests=args.tests
     )
 
     all_tests_succeeded = workflow.execute()
 
     if all_tests_succeeded:
-        print("\nWorkflow completed successfully.")
+        print("[OK]   Workflow completed successfully.")
         sys.exit(0)
     else:
-        print("\nWorkflow completed, but some tests failed.", file=sys.stderr)
+        print("[ERROR] Workflow completed, but some tests failed.", file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":

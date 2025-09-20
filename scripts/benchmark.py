@@ -5,26 +5,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional, Iterable, Tuple, List
 import argparse
-import sys
+from workflow_exceptions import WorkflowLogParseError, workflow_exception_handler
 
 class BenchmarkLogParser:
-    """
-    Parses multiple benchmark log files (CoreMark, Dhrystone, MicroBench)
-    to generate a single, structured JSON summary.
-    """
-    # CoreMark Regex
     _CM_SIZE_RE = re.compile(r"CoreMark Size\s*:\s*(\d+)")
     _CM_TIME_RE = re.compile(r"Total time \(ms\)\s*:\s*(\d+)")
     _CM_ITER_RE = re.compile(r"Iterations\s*:\s*(\d+)")
     _CM_CRC_RE = re.compile(r"\[0\]crc\w+\s*:\s*0x([0-9a-fA-F]{4})")
     _CM_FINAL_RE = re.compile(r"CoreMark (PASS|FAIL)\s+([\d.]+)", re.IGNORECASE)
-
-    # Dhrystone Regex
     _DH_ITER_RE = re.compile(r"Trying\s+(\d+)\s+runs")
     _DH_TIME_RE = re.compile(r"Finished in\s+(\d+)\s*ms")
     _DH_FINAL_RE = re.compile(r"Dhrystone (PASS|FAIL)\s+([\d.]+)", re.IGNORECASE)
-
-    # MicroBench Regex
     _MB_INPUT_RE = re.compile(r'input \*(.*?)\*')
     _MB_TEST_RE = re.compile(r"\[(\w+)\]\s+(.+?):\s+\*\s+(\w+)\.")
     _MB_SCORED_TIME_RE = re.compile(r"Scored time:\s*([\d.]+)\s*ms")
@@ -33,25 +24,21 @@ class BenchmarkLogParser:
 
     def __init__(self, log_dir: str):
         if not log_dir:
-            raise ValueError("log_dir cannot be empty.")
-        
+            raise WorkflowLogParseError("log_dir cannot be empty.")
         top_name = os.environ.get("TOP_NAME", "unknown_top")
         log_path = Path(log_dir)
-        
         self.log_files = {
             "coremark": log_path / f"{top_name}_coremark.log",
             "dhrystone": log_path / f"{top_name}_dhrystone.log",
             "microbench": log_path / f"{top_name}_microbench.log",
         }
         self.result_json = log_path / f"{top_name}_benchmark.json"
-        
         self.result_json.parent.mkdir(parents=True, exist_ok=True)
 
     def _parse_coremark(self, lines: Iterable[str]) -> Dict[str, Any]:
         results: Dict[str, Any] = {"status": "FAIL", "details": {}}
         crclist = None
         crcfinal = None
-
         for line in lines:
             if (m := self._CM_SIZE_RE.search(line)):
                 results["details"]["CoreMark Size"] = int(m.group(1))
@@ -70,14 +57,12 @@ class BenchmarkLogParser:
             elif (m := self._CM_FINAL_RE.search(line)):
                 results["status"] = m.group(1).upper()
                 results["details"]["Marks"] = m.group(2)
-            
         results["details"]["crclist"] = crclist
         results["details"]["crcfinal"] = crcfinal
         crc_pass = (crclist is not None and crcfinal is not None and crclist == crcfinal)
         results["details"]["crc_check"] = "PASS" if crc_pass else "FAIL"
         if results["status"] == "PASS" and not crc_pass:
             results["status"] = "FAIL"
-
         return results
 
     def _parse_dhrystone(self, lines: Iterable[str]) -> Dict[str, Any]:
@@ -109,7 +94,6 @@ class BenchmarkLogParser:
                 results["details"]["Total time (ms)"] = float(m.group(1))
             elif (m := self._MB_FINAL_RE.search(line)):
                 results["status"] = m.group(1).upper()
-        
         total_count = len(results["details"]["tests"])
         results["summary"] = {
             "passed": pass_count, "total": total_count,
@@ -121,7 +105,6 @@ class BenchmarkLogParser:
         log_file = self.log_files.get(name)
         if not log_file or not log_file.is_file():
             return {"status": "FAIL", "error": f"Log file not found at {log_file}"}
-        
         try:
             with log_file.open("r", encoding="utf-8") as f:
                 return parser_func(f)
@@ -129,14 +112,13 @@ class BenchmarkLogParser:
             return {"status": "FAIL", "error": f"Error parsing {log_file}: {e}"}
 
     def parse(self, return_data=False):
+        print("[INFO] Parsing benchmark logs...")
         metadata = {
             "source_logs": {k: str(v) for k, v in self.log_files.items()},
             "parser": self.__class__.__name__,
             "parsed_at_utc": datetime.now(timezone.utc).isoformat()
         }
-
         results = {}
-
         for name, parser_func in [
             ("coremark", self._parse_coremark),
             ("dhrystone", self._parse_dhrystone),
@@ -145,11 +127,9 @@ class BenchmarkLogParser:
             res = self._parse_single_log(name, parser_func)
             res["metadata"] = metadata
             results[name] = res
-
         if not return_data:
             self._write_json(results)
-            self._print_summary(results)
-            
+            print("[OK]   Benchmark results saved to", self.result_json)
         return results if return_data else None
 
     def _write_json(self, data: Dict[str, Any]):
@@ -157,34 +137,15 @@ class BenchmarkLogParser:
             with self.result_json.open("w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except IOError as e:
-            print(f"Error: Could not write JSON to {self.result_json}. Reason: {e}", file=sys.stderr)
+            raise WorkflowLogParseError(f"Could not write JSON to {self.result_json}. Reason: {e}")
 
-    def _print_summary(self, report: Dict[str, Any]):
-        print("Benchmark Summary:")
-        for name, result in report.items():
-            status = result.get('status', 'FAIL')
-            summary_str = ""
-            if name == "microbench" and "summary" in result:
-                summary = result["summary"]
-                summary_str = f"({summary['passed']}/{summary['total']})"
-            elif name == "coremark" and result.get("details", {}).get("crc_check"):
-                summary_str = f"(CRC Check: {result['details']['crc_check']})"
-
-            print(f"- {name:<12}: {status} {summary_str}")
-        print(f"Result JSON saved to: {self.result_json}")
+@workflow_exception_handler
+def main():
+    parser = argparse.ArgumentParser(description="Parse benchmark logs into a JSON summary.")
+    parser.add_argument("--log_dir", type=str, default=os.environ.get("LOG_DIR", "./log"), help="Directory containing the log files. Defaults to LOG_DIR env var or './log'.")
+    args = parser.parse_args()
+    log_parser = BenchmarkLogParser(log_dir=args.log_dir)
+    log_parser.parse()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Parse benchmark logs into a JSON summary.")
-    parser.add_argument(
-        "--log_dir",
-        type=str,
-        default=os.environ.get("LOG_DIR", "./log"),
-        help="Directory containing the log files. Defaults to LOG_DIR env var or './log'."
-    )
-    args = parser.parse_args()
-    
-    try:
-        log_parser = BenchmarkLogParser(log_dir=args.log_dir)
-        log_parser.parse()
-    except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+    main()

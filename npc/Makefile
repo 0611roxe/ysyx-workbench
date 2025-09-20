@@ -2,7 +2,7 @@
 #Run time parameters
 #===============================================
 MAX_SIM_TIME = $(MAX_SIMULATE_TIME)				# define the max simulation time
-RUN_THREADS ?= 2						# define the number of threads for running NPC
+RUN_THREADS ?= 1						# define the number of threads for running NPC
 # CONFIG_LOG_TRACE = $(CONFIG_LOG_TRACE)	# enable waveform trace
 
 #===============================================
@@ -38,7 +38,7 @@ CXXSRC = $(wildcard $(shell find ./csrc -name  *.cpp))
 VSRC += $(wildcard $(shell find $(ysyxSOC_DIR)/perip -name *.v -or -name *.vh -or -name *.sv -or -name *.svh))
 VSRC += $()
 
-VSRC += $(wildcard $(RESULT_DIR)/vsrc/*.v) $(wildcard $(RESULT_DIR)/vsrc/*.sv)
+VSRC += $(wildcard $(RESULT_DIR)/vsrc/*.v) $(wildcard $(RESULT_DIR)/vsrc/*.sv) $(wildcard $(RESULT_DIR)/vsrc/*.svh)
 
 ## 2. 添加头文件路径
 C_INCPATH += $(NPC_HOME)/include $(INC_PATH) \
@@ -109,7 +109,7 @@ run: $(BUILD_DIR)/V$(TOP_NAME)
 ## 4. 通过gdb调试NPC
 gdb:
 	gdb --args $(BUILD_DIR)/V$(TOP_NAME)  $(ARGS) $(ELF) $(PORT) $(DIFF_FILE) $(IMG)
-
+$(BUILD_DIR)/V$(TOP_NAME)  $(BATCH_MODE) $(ELF) $(PORT) $(DIFF_FILE) $(IMG)
 
 ## 5. clean
 .PHONY: clean  count_v
