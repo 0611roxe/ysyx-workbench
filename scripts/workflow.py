@@ -79,13 +79,13 @@ class MainWorkflow:
             )
             if not self.simulator._build_simulator():
                 build_log = Path(os.environ["RESULT_DIR"]) / "build.log"
-                print("[ERROR] Build Verilator Simulator failed. Dumping build.log:", file=sys.stderr)
                 try:
-                    with open(build_log, "r") as f:
-                        tail = f.readlines()[-80:]
-                        print("".join(tail), file=sys.stderr)
+                    from verierror import VeriErrorParser
+                    parser = VeriErrorParser(str(build_log))
+                    parser.parse()
+                    parser.write_tracebacks()
                 except Exception as e:
-                    print(f"[ERROR] Could not read build log: {e}", file=sys.stderr)
+                    print(f"[ERROR] Could not parse Verilator errors: {e}", file=sys.stderr)
                 raise WorkflowSimBuildError("Simulator build failure")
 
             print("[OK]   Build Verilator Simulator finished.")

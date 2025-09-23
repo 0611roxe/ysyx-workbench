@@ -68,14 +68,7 @@ class Simulator:
         with open(build_log, "w") as logf:
             proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT, text=True)
             rc = proc.wait()
-        if rc != 0:
-            print("[ERROR] Build Verilator Simulator failed. Dumping build.log:", file=sys.stderr)
-            try:
-                with open(build_log, "r") as f:
-                    tail = f.readlines()[-80:]
-                    print("".join(tail), file=sys.stderr)
-            except Exception as e:
-                print(f"[ERROR] Could not read build log: {e}", file=sys.stderr)
+        if rc != 0:     
             return False
         print("[OK]   Build Verilator Simulator finished.")
         return True
