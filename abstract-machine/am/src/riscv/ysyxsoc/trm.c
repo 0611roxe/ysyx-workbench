@@ -25,12 +25,15 @@ static const char mainargs[] = MAINARGS;
 #define UART_REG_LS    UART_BASE + 0x5
 
 void init_uart (void) {
+    *(volatile uint8_t *)(UART_REG_LC) = 0b00000011; //强制清空缓存区
     *(volatile uint8_t *)(UART_REG_LC) = 0b10000011;    // 1停止位，无校验位，禁止中断，开始写divisor
-    *(volatile uint8_t *)(UART_TX_ADDR) = 0x01;    // 写Divisor
+    *(volatile uint8_t *)(UART_BASE + 0x1) = 0x00;    // 写Divisor低8位
+    *(volatile uint8_t *)(UART_TX_ADDR) = 0x0C;    // 写Divisor
     *(volatile uint8_t *)(UART_REG_LC) = 0b00000011;    // 1停止位，无校验位，禁止中断，停止写divisor
 }
 
 void putch (char ch) {
+    while(((*(volatile uint8_t *)(UART_REG_LS))& 0b00100000)== 0); //等待传输FIFO有空位
     *(volatile uint8_t *)(UART_TX_ADDR) = ch;
     /*uint8_t lsr = *(volatile uint8_t *)(UART_REG_LS);*/
     /*while ((lsr & 0x40) != 0x40) { //等待lsr6为1,即等待uart数据发送完成*/
