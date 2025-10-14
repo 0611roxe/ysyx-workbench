@@ -2,7 +2,7 @@ import re
 import os
 from pathlib import Path
 
-# Extended Verilator error type → error code & default English message
+# Extended Verilator and compiler/linker error type → error code & default English message
 VERILATOR_ERROR_DICT = {
     'MODMISSING': {
         "code": 201,
@@ -12,16 +12,32 @@ VERILATOR_ERROR_DICT = {
         "code": 202,
         "base_msg": "File cannot be opened or read"
     },
-    'INCLDUP': {
+    'FILEWRITE': {
         "code": 203,
+        "base_msg": "File cannot be written"
+    },
+    'INCLDUP': {
+        "code": 204,
         "base_msg": "File included multiple times"
     },
+    'INCLUDE': {
+        "code": 205,
+        "base_msg": "Include file not found or error"
+    },
     'UNDEF': {
-        "code": 204,
+        "code": 206,
         "base_msg": "Undefined symbol"
     },
+    'MULTIDEF': {
+        "code": 207,
+        "base_msg": "Multiple definition of symbol"
+    },
+    'REDECL': {
+        "code": 208,
+        "base_msg": "Redeclaration of symbol"
+    },
     'SYMTYPE': {
-        "code": 205,
+        "code": 209,
         "base_msg": "Symbol type error"
     },
     'SYNERR': {
@@ -30,15 +46,23 @@ VERILATOR_ERROR_DICT = {
     },
     'SYNTAX': {
         "code": 211,
-        "base_msg": "Verilog syntax error"
+        "base_msg": "Syntax error"
+    },
+    'COMPILER': {
+        "code": 212,
+        "base_msg": "Compiler error"
     },
     'UNSUPPORTED': {
-        "code": 212,
+        "code": 213,
         "base_msg": "Unsupported syntax or feature"
     },
     'DEPRECATED': {
-        "code": 213,
+        "code": 214,
         "base_msg": "Deprecated syntax used"
+    },
+    'DEPRECATED_TOOL': {
+        "code": 215,
+        "base_msg": "Deprecated tool or command used"
     },
     'PORTCONNECT': {
         "code": 220,
@@ -140,14 +164,74 @@ VERILATOR_ERROR_DICT = {
         "code": 265,
         "base_msg": "General warning"
     },
+    'LINKER': {
+        "code": 280,
+        "base_msg": "Linker error"
+    },
+    'MEMORY': {
+        "code": 281,
+        "base_msg": "Memory allocation/access error"
+    },
+    'SEGFAULT': {
+        "code": 282,
+        "base_msg": "Segmentation fault"
+    },
+    'PERMISSION': {
+        "code": 283,
+        "base_msg": "Permission denied"
+    },
+    'TIMEOUT': {
+        "code": 284,
+        "base_msg": "Timeout error"
+    },
+    'TOOLNOTFOUND': {
+        "code": 285,
+        "base_msg": "Tool or command not found"
+    },
     'GENERIC': {
         "code": 299,
-        "base_msg": "Unknown Verilator error"
+        "base_msg": "Unknown error"
     }
 }
 
 def classify_generic_error(err_msg):
     """Classify GENERIC errors to more specific types based on message content."""
+    msg_lower = err_msg.lower()
+
+    # Linker errors
+    if ("undefined reference to" in err_msg or "ld returned" in err_msg or "multiple definition of" in err_msg):
+        return "LINKER"
+    if "multiple definition" in err_msg:
+        return "MULTIDEF"
+    if "redefinition" in err_msg or "redeclaration" in err_msg:
+        return "REDECL"
+    # Compiler errors
+    if ("error: expected" in err_msg or "error: stray" in err_msg or "error: ‘" in err_msg or "error: invalid" in err_msg or "parse error" in msg_lower):
+        return "COMPILER"
+    if ("syntax error" in msg_lower):
+        return "SYNTAX"
+    if ("undeclared" in msg_lower or "not declared" in msg_lower):
+        return "UNDEF"
+    if ("no such file or directory" in err_msg or "included file not found" in msg_lower):
+        return "INCLUDE"
+    if ("deprecated" in msg_lower and "tool" in msg_lower):
+        return "DEPRECATED_TOOL"
+    if ("deprecated" in msg_lower):
+        return "DEPRECATED"
+    # Memory errors
+    if ("out of memory" in msg_lower or "cannot allocate memory" in msg_lower):
+        return "MEMORY"
+    if ("segmentation fault" in msg_lower or "core dumped" in msg_lower):
+        return "SEGFAULT"
+    # Permission errors
+    if ("permission denied" in msg_lower):
+        return "PERMISSION"
+    # Timeout errors
+    if ("timeout" in msg_lower or "timed out" in msg_lower):
+        return "TIMEOUT"
+    # Tool/command not found
+    if ("command not found" in msg_lower or "no such command" in msg_lower or "tool not found" in msg_lower):
+        return "TOOLNOTFOUND"
     # Port connection/undefined errors
     if ("Instance attempts to connect to" in err_msg and "but it is a variable" in err_msg) or \
        ("Instance port" in err_msg and "does not exist" in err_msg):
@@ -198,6 +282,39 @@ class VeriErrorParser:
                 })
                 break
             else:
+                generic_error_patterns = [
+                    r"undefined reference to",
+                    r"multiple definition of",
+                    r"redefinition of",
+                    r"error: expected",
+                    r"error: stray",
+                    r"error: ‘",
+                    r"error: invalid",
+                    r"parse error",
+                    r"syntax error",
+                    r"undeclared",
+                    r"not declared",
+                    r"no such file or directory",
+                    r"included file not found",
+                    r"deprecated",
+                    r"out of memory",
+                    r"cannot allocate memory",
+                    r"segmentation fault",
+                    r"core dumped",
+                    r"permission denied",
+                    r"timeout",
+                    r"timed out",
+                    r"command not found",
+                    r"tool not found",
+                ]
+                for pat in generic_error_patterns:
+                    if re.search(pat, lines[i], re.IGNORECASE):
+                        error_type = classify_generic_error(lines[i])
+                        self.errors.append({
+                            "error_type": error_type,
+                            "error_msg": lines[i].strip()
+                        })
+                        break
                 i += 1
 
     def get_error_code(self, error_type):
