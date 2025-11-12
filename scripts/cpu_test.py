@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Iterable, Tuple
 import argparse
 from pathlib import Path
-from workflow_exceptions import WorkflowLogParseError, workflow_exception_handler
+from workflow_utils import WorkflowLogParseError, workflow_exception_handler
 
 class CpuTestLogParser:
     _TEST_LINE_RE = re.compile(
@@ -113,16 +113,3 @@ class CpuTestLogParser:
                 json.dump(data, f, indent=2)
         except IOError as e:
             raise WorkflowLogParseError(f"Could not write JSON to {self.result_json}. Reason: {e}")
-
-@workflow_exception_handler
-def main():
-    parser = argparse.ArgumentParser(description="Parse CPU test logs into a JSON summary.")
-    parser.add_argument("--log_dir", type=str, default=os.environ.get("RESULT_DIR", "."), help="Directory containing the log file. Defaults to RESULT_DIR env var or current directory.")
-    args = parser.parse_args()
-    print("[INFO] Parsing cpu-test log...")
-    log_parser = CpuTestLogParser(log_dir=args.log_dir)
-    log_parser.parse()
-    print("[OK]   cpu-test results saved.")
-
-if __name__ == "__main__":
-    main()

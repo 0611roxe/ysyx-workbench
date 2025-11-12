@@ -57,16 +57,21 @@ VERILATOR_LDFLAGS =  -LDFLAGS "-lreadline $(LIBS) -lSDL2  "
 ### 指定输出文件夹
 VERILATOR_FLAG = --Mdir $(BUILD_DIR)
 ### 添加soc rtl路径
-VERILATOR_FLAG += -I$(ysyxSOC_DIR)/perip/uart16550/rtl -I$(ysyxSOC_DIR)/perip/spi/rtl
-VERILATOR_FLAG += -I$(NPC_HOME)/vsrc
-VERILATOR_FLAG += -I$(SOC_MUX)
-VERILATOR_FLAG += -I$(SOC_MUX)/src/soc
-VERILATOR_FLAG += -I$(SOC_MUX)/src/core
-VERILATOR_FLAG += -I$(ysyxSOC_DIR)
-VERILATOR_FLAG += --cc -j `nproc` -O3  --exe --build  -Wno-DECLFILENAME --timescale "1ns/1ns" --no-timing --trace-fst $(VERILATOR_CFLAGS) $(VERILATOR_LDFLAGS) --top-module $(TOP_NAME) -I./vsrc
+
+VERILATOR_INC_FLAGS += -I$(ysyxSOC_DIR)/perip/uart16550/rtl -I$(ysyxSOC_DIR)/perip/spi/rtl
+VERILATOR_INC_FLAGS += -I$(NPC_HOME)/vsrc
+VERILATOR_INC_FLAGS += -I$(SOC_MUX)
+VERILATOR_INC_FLAGS += -I$(SOC_MUX)/src/soc
+VERILATOR_INC_FLAGS += -I$(SOC_MUX)/src/core
+VERILATOR_INC_FLAGS += -I$(ysyxSOC_DIR)
+VERILATOR_INC_FLAGS += -I./vsrc
+
+VERILATOR_FLAG += $(VERILATOR_INC_FLAGS)
+VERILATOR_FLAG += --cc -j `nproc` -O3  --exe --build  -Wno-DECLFILENAME --timescale "1ns/1ns" --no-timing --trace-fst $(VERILATOR_CFLAGS) $(VERILATOR_LDFLAGS) --top-module $(TOP_NAME)
 VERILATOR_FLAG += --threads $(RUN_THREADS)
 # VERILATOR_FLAG += -no-timing
 VERILATOR_FLAG += -Wno-lint --Wno-UNOPTTHREADS --autoflush
+
 
 
 #===============================================
@@ -114,5 +119,10 @@ gdb:
 .PHONY: clean  count_v
 clean:
 	rm -rf $(BUILD_DIR) ./wave.fst
+
+lint:
+	@echo "Running Verilator in lint-only mode..."
+	@echo "----------------------------------------------------------"
+	$(VERILATOR) --lint-only --timescale "1ns/1ns" --no-timing $(VERILATOR_INC_FLAGS) --top-module $(TOP_NAME) $(VSRC) 
 
 .DEFAULT_GOAL = all

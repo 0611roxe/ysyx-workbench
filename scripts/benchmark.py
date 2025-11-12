@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional, Iterable, Tuple, List
 import argparse
-from workflow_exceptions import WorkflowLogParseError, workflow_exception_handler
+from workflow_utils import WorkflowLogParseError, workflow_exception_handler
 
 class BenchmarkLogParser:
     _CM_SIZE_RE = re.compile(r"CoreMark Size\s*:\s*(\d+)")
@@ -138,14 +138,3 @@ class BenchmarkLogParser:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except IOError as e:
             raise WorkflowLogParseError(f"Could not write JSON to {self.result_json}. Reason: {e}")
-
-@workflow_exception_handler
-def main():
-    parser = argparse.ArgumentParser(description="Parse benchmark logs into a JSON summary.")
-    parser.add_argument("--log_dir", type=str, default=os.environ.get("LOG_DIR", "./log"), help="Directory containing the log files. Defaults to LOG_DIR env var or './log'.")
-    args = parser.parse_args()
-    log_parser = BenchmarkLogParser(log_dir=args.log_dir)
-    log_parser.parse()
-
-if __name__ == "__main__":
-    main()

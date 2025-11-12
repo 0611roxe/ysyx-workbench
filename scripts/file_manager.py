@@ -2,7 +2,7 @@ from pathlib import Path
 import shutil
 import re
 from typing import List, Union
-from workflow_exceptions import WorkflowFileNotFound
+from workflow_utils import WorkflowFileNotFound
 
 class FileBackupManager:
     def __init__(self, result_dir: Path):

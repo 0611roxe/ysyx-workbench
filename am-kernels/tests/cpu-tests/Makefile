@@ -36,7 +36,7 @@ $(TMP_MAKE_DIR)/%.pass: tests/%.c latest
 	/bin/echo -e "NAME = $*\nSRCS = tests/$*.c\nBUILD_DIR = $${ABS_BUILD_DIR}\ninclude $${AM_HOME}/Makefile" > $(TMP_MAKE_DIR)/Makefile.$*
 	
 	@start_time=$$(date +%s%N); \
-	if make -s -f $(TMP_MAKE_DIR)/Makefile.$* ARCH=$(ARCH) run > $(TMP_MAKE_DIR)/$*.log 2>&1; then \
+	if $(MAKE) -s -f $(TMP_MAKE_DIR)/Makefile.$* ARCH=$(ARCH) run > $(TMP_MAKE_DIR)/$*.log 2>&1; then \
 	    end_time=$$(date +%s%N); \
 	    duration=$$(echo "scale=3; ($$end_time - $$start_time)/1000000000" | bc); \
 	    printf "[%14s] PASS  %ss\n" $* $$duration >> $(RESULT_FILE); \

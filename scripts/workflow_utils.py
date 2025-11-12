@@ -1,4 +1,5 @@
 import sys
+import os
 
 class WorkflowError(Exception): pass
 class WorkflowEnvError(WorkflowError): pass
@@ -18,6 +19,7 @@ EXCEPTION_EXIT_CODE = {
 }
 
 def workflow_exception_handler(func):
+    """A decorator to catch and handle custom workflow exceptions."""
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
@@ -27,6 +29,15 @@ def workflow_exception_handler(func):
         except SystemExit:
             raise
         except Exception as e:
-            print(f"[UnknownError] {e}", file=sys.stderr)
+            print(f"[UnknownError] An unexpected error occurred: {e}", file=sys.stderr)
             sys.exit(1)
     return wrapper
+    
+def require_env(var: str) -> str:
+    """
+    Gets an environment variable, raising a WorkflowEnvError if it's not set.
+    """
+    v = os.environ.get(var)
+    if v is None:
+        raise WorkflowEnvError(f"Required environment variable '{var}' is not set")
+    return v

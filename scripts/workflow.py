@@ -1,28 +1,21 @@
 import argparse
 import sys
 import os
+import subprocess
 from pathlib import Path
 from typing import Optional, List
 import json
-from workflow_exceptions import (
-    WorkflowEnvError, WorkflowFileNotFound, WorkflowSimBuildError,
-    WorkflowTestNotFound, WorkflowLogParseError, WorkflowArgumentError,
-    workflow_exception_handler
-)
 
 try:
     from file_manager import FileBackupManager
     from simulator import Simulator
     from cpu_test import CpuTestLogParser
     from benchmark import BenchmarkLogParser
+    from workflow_utils import (
+        require_env, WorkflowEnvError, WorkflowFileNotFound, WorkflowSimBuildError, WorkflowArgumentError, workflow_exception_handler
+    )
 except ImportError as e:
     raise WorkflowEnvError(f"Could not import a required class. Is the script path configured correctly? Details: {e}")
-
-def require_env(var):
-    v = os.environ.get(var)
-    if v is None:
-        raise WorkflowEnvError(f"Required environment variable '{var}' is not set")
-    return v
 
 class MainWorkflow:
     def __init__(self, rtl_file, stage: str, mainargs: str, tests: list[str]):
@@ -54,6 +47,33 @@ class MainWorkflow:
         self.soc_test_json = f"{os.environ.get('TOP_NAME', 'top')}_soc_test.json"
         self.simulator: Optional[Simulator] = None
 
+
+    def _run_lint_check(self) -> bool:
+        npc_home_dir = require_env("NPC_HOME")
+        command = ["make", "-C", npc_home_dir, "lint"]
+        
+        try:
+            process = subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            for line in iter(process.stdout.readline, ''):
+                sys.stdout.write(line)
+
+            return_code = process.wait()
+            if return_code == 0:
+                print("[OK]   Lint check passed.")
+                return True
+            else:
+                print(f"[ERROR] Lint check failed with exit code {return_code}.", file=sys.stderr)
+                return False
+
+        except FileNotFoundError:
+            print("[ERROR] 'make' command not found. Ensure it is in your system's PATH.", file=sys.stderr)
+            return False
+        except Exception as e:
+            print(f"[ERROR] An unexpected error occurred during lint check: {e}", file=sys.stderr)
+            return False
+
     def _replace_files(self):
         top_name = os.environ.get("TOP_NAME", "ysyx_00000000")
         if self.stage.upper() == "D":
@@ -68,6 +88,9 @@ class MainWorkflow:
 
     def execute(self) -> bool:
         self._replace_files()
+        if not self._run_lint_check():
+            raise WorkflowSimBuildError("Lint check failed. Please fix the reported issues before proceeding.")
+
         try:
             print("[INFO] Building Verilator Simulator...")
             sim_rtl_file = self.rtl_file_result_path
@@ -75,7 +98,8 @@ class MainWorkflow:
                 rtl_file=sim_rtl_file,
                 top_name=os.environ.get("TOP_NAME", "ysyx_00000000"),
                 stage=self.stage,
-                max_parallel_jobs=8
+                max_parallel_jobs=8,
+                cpu_count=8
             )
             if not self.simulator._build_simulator():
                 build_log = Path(os.environ["RESULT_DIR"]) / "build.log"
